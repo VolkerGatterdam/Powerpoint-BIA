@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daten-Visualisierung</title>
+
+    <!-- Office.js Bibliothek -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+
+    <!-- Fluent UI fuer konsistentes Microsoft-Design -->
+    <link rel="stylesheet" href="https://static2.sharepointonline.com/files/fabric/office-ui-fabric-core/11.0.0/css/fabric.min.css"/>
+
+    <style>
+    /* Reset und Vollbild-Basis */
+    * {
+        box-sizing: border-box;
+    }
+
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #ffffff;
+    }
+
+    /* ===== Setup-Ansicht: Zentrierte Karte ===== */
+
+    .view-setup {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #faf9f8;
+    }
+
+    .setup-card {
+        background: #ffffff;
+        border-radius: 8px;
+        padding: 32px;
+        max-width: 500px;
+        width: 90%;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .setup-card h2 {
+        margin: 0 0 20px 0;
+        color: #323130;
+        font-weight: 600;
+    }
+
+    .setup-card label {
+        display: block;
+        margin-bottom: 6px;
+        color: #605e5c;
+    }
+
+    /* Eingabegruppe */
+    .input-group {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .input-group input {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid #8a8886;
+        border-radius: 2px;
+        font-size: 14px;
+        transition: border-color 0.1s;
+    }
+
+    .input-group input:focus {
+        outline: none;
+        border-color: #0078d4;
+        box-shadow: 0 0 0 1px #0078d4;
+    }
+
+    /* Buttons im Microsoft-Stil */
+    .ms-Button {
+        padding: 8px 16px;
+        border: 1px solid #8a8886;
+        border-radius: 2px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.1s;
+    }
+
+    .ms-Button:hover:not(:disabled) {
+        background: #f3f2f1;
+    }
+
+    .ms-Button--primary {
+        background: #0078d4;
+        border-color: #0078d4;
+        color: #fff;
+    }
+
+    .ms-Button--primary:hover:not(:disabled) {
+        background: #106ebe;
+        border-color: #106ebe;
+    }
+
+    /* Favoriten Dropdown */
+    .favorites-section {
+        margin-top: 8px;
+    }
+
+    .favorites-section label {
+        margin-bottom: 4px;
+    }
+
+    .ms-Dropdown-select {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #8a8886;
+        border-radius: 2px;
+        font-size: 13px;
+        background: #fff;
+    }
+
+    /* Fehleranzeige */
+    .error-message {
+        padding: 10px 12px;
+        margin-top: 12px;
+        background-color: #fde7e9;
+        border-left: 3px solid #a4262c;
+        color: #a4262c;
+        border-radius: 2px;
+    }
+
+    /* ===== Display-Ansicht: Vollbild-iframe ===== */
+
+    .view-display {
+        width: 100%;
+        height: 100%;
+        position: relative;
+    }
+
+    .view-display #vizFrame {
+        width: 100%;
+        height: 100%;
+        border: none;
+        display: block;
+    }
+
+    /* Schwebendes Toolbar-Overlay */
+    .toolbar {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        display: flex;
+        gap: 4px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        z-index: 100;
+    }
+
+    .view-display:hover .toolbar {
+        opacity: 1;
+    }
+
+    .toolbar-btn {
+        width: 32px;
+        height: 32px;
+        border: none;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        color: #323130;
+        padding: 0;
+    }
+
+    .toolbar-btn:hover {
+        background: #ffffff;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Praesentationsmodus: Toolbar und Setup komplett ausblenden */
+    body.presentation-mode .toolbar {
+        display: none !important;
+    }
+
+    body.presentation-mode .view-setup {
+        display: none !important;
+    }
+
+    /* Ladeanimation */
+    .loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.8);
+        z-index: 50;
+    }
+
+    .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid #edebe9;
+        border-top-color: #0078d4;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    </style>
+</head>
+<body class="ms-Fabric">
+    <!-- Setup-Ansicht: URL-Eingabe (zentrierte Karte) -->
+    <div id="setupView" class="view-setup">
+        <div class="setup-card">
+            <h2 class="ms-font-l">Visualisierung einbetten</h2>
+
+            <label class="ms-font-m" for="vizUrl">URL zur HTML-Datei:</label>
+            <div class="input-group">
+                <input
+                    type="url"
+                    id="vizUrl"
+                    class="ms-TextField-field"
+                    placeholder="https://example.com/visualisierung.html"
+                />
+                <button id="loadBtn" class="ms-Button ms-Button--primary">
+                    <span class="ms-Button-label">Laden</span>
+                </button>
+            </div>
+
+            <div class="favorites-section">
+                <label class="ms-font-s">Zuletzt verwendet:</label>
+                <select id="favorites" class="ms-Dropdown-select">
+                    <option value="">-- Auswaehlen --</option>
+                </select>
+            </div>
+
+            <div id="errorMsg" class="error-message ms-font-s" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Display-Ansicht: Vollbild-Visualisierung -->
+    <div id="displayView" class="view-display" style="display: none;">
+        <iframe
+            id="vizFrame"
+            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+        ></iframe>
+
+        <!-- Schwebendes Toolbar-Overlay (oben rechts) -->
+        <div id="toolbar" class="toolbar">
+            <button id="editBtn" class="toolbar-btn" title="URL aendern">
+                &#9881;
+            </button>
+            <button id="refreshBtn" class="toolbar-btn" title="Aktualisieren">
+                &#8635;
+            </button>
+        </div>
+    </div>
+
+    <script>
+    /*
+     * Daten-Visualisierung PowerPoint Content Add-in
+     * Bettet interaktive HTML-Dateien direkt auf der Folie ein
+     */
+
+    // Konstanten
+    const STORAGE_KEY = 'vizAddin_favorites';
+    const SETTINGS_KEY = 'vizUrl';
+    const LAST_URL_KEY = 'vizAddin_lastUrl';  // localStorage-Backup fuer Praesentationsmodus
+    const MAX_FAVORITES = 10;
+
+    // Zustand
+    let currentUrl = '';
+    let isOfficeEnvironment = false;
+
+    // Office.js Einstiegspunkt — oder Browser-Fallback
+    if (typeof Office !== 'undefined') {
+        Office.onReady((info) => {
+            if (info.host === Office.HostType.PowerPoint) {
+                isOfficeEnvironment = true;
+                console.log('Content Add-in geladen in PowerPoint');
+            } else {
+                console.log('Office geladen, aber nicht PowerPoint — Browser-Modus');
+            }
+            initializeApp();
+        });
+    } else {
+        console.log('Kein Office.js — Browser-Testmodus');
+        document.addEventListener('DOMContentLoaded', initializeApp);
+    }
+
+    function initializeApp() {
+        // Event Listeners
+        document.getElementById('loadBtn').addEventListener('click', () => {
+            handleLoadClick(document.getElementById('vizUrl').value);
+        });
+
+        document.getElementById('vizUrl').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleLoadClick(document.getElementById('vizUrl').value);
+            }
+        });
+
+        document.getElementById('favorites').addEventListener('change', (e) => {
+            if (e.target.value) {
+                document.getElementById('vizUrl').value = e.target.value;
+                handleLoadClick(e.target.value);
+            }
+        });
+
+        document.getElementById('editBtn').addEventListener('click', showSetupView);
+        document.getElementById('refreshBtn').addEventListener('click', () => {
+            if (currentUrl) loadVisualization(currentUrl);
+        });
+
+        // Frame-Events
+        document.getElementById('vizFrame').addEventListener('load', onFrameLoaded);
+        document.getElementById('vizFrame').addEventListener('error', onFrameError);
+
+        // Favoriten aus localStorage laden
+        loadFavorites();
+
+        // Gespeicherte URL wiederherstellen (Fallback-Kette)
+        restoreSavedUrl();
+
+        if (isOfficeEnvironment) {
+            detectViewMode();
+        }
+    }
+
+    function restoreSavedUrl() {
+        let savedUrl = null;
+
+        // 1. Versuch: Document Settings (in .pptx gespeichert, pro Instanz)
+        if (isOfficeEnvironment) {
+            try {
+                savedUrl = Office.context.document.settings.get(SETTINGS_KEY);
+            } catch (e) {
+                console.warn('Document Settings nicht verfuegbar:', e);
+            }
+        }
+
+        // 2. Versuch: localStorage-Backup (funktioniert auch im Praesentationsmodus)
+        if (!savedUrl) {
+            try {
+                savedUrl = localStorage.getItem(LAST_URL_KEY);
+            } catch (e) {
+                console.warn('localStorage nicht verfuegbar:', e);
+            }
+        }
+
+        // 3. Versuch: Letzter Favorit
+        if (!savedUrl) {
+            const favorites = getFavorites();
+            if (favorites.length > 0) {
+                savedUrl = favorites[0].url;
+            }
+        }
+
+        if (savedUrl) {
+            currentUrl = savedUrl;
+            loadVisualization(savedUrl);
+        }
+    }
+
+    // ===== URL laden und speichern =====
+
+    function handleLoadClick(url) {
+        if (!url) {
+            showError('Bitte eine URL eingeben.');
+            return;
+        }
+        if (!isValidUrl(url)) {
+            showError('Bitte eine gueltige URL eingeben (https://...)');
+            return;
+        }
+        hideError();
+        currentUrl = url;
+
+        if (isOfficeEnvironment) {
+            Office.context.document.settings.set(SETTINGS_KEY, url);
+            Office.context.document.settings.saveAsync((result) => {
+                if (result.status === Office.AsyncResultStatus.Failed) {
+                    console.error('Settings speichern fehlgeschlagen:', result.error.message);
+                }
+            });
+        }
+
+        // URL in localStorage als Backup speichern (fuer Praesentationsmodus)
+        try {
+            localStorage.setItem(LAST_URL_KEY, url);
+        } catch (e) {
+            console.warn('localStorage Backup fehlgeschlagen:', e);
+        }
+
+        addToFavorites(url);
+        loadVisualization(url);
+    }
+
+    function loadVisualization(url) {
+        document.getElementById('vizFrame').src = url;
+    }
+
+    // ===== Ansichten umschalten =====
+
+    function showSetupView() {
+        document.getElementById('setupView').style.display = 'flex';
+        document.getElementById('displayView').style.display = 'none';
+        if (currentUrl) {
+            document.getElementById('vizUrl').value = currentUrl;
+        }
+    }
+
+    function showDisplayView() {
+        document.getElementById('setupView').style.display = 'none';
+        document.getElementById('displayView').style.display = 'block';
+    }
+
+    // ===== Frame-Events =====
+
+    function onFrameLoaded() {
+        showDisplayView();
+        console.log('Visualisierung geladen:', currentUrl);
+    }
+
+    function onFrameError() {
+        showError('Die Visualisierung konnte nicht geladen werden. URL und Zugriffsrechte pruefen.');
+        showSetupView();
+    }
+
+    // ===== Praesentationsmodus =====
+
+    function detectViewMode() {
+        if (!isOfficeEnvironment) return;
+
+        Office.context.document.addHandlerAsync(
+            Office.EventType.ActiveViewChanged,
+            onViewChanged,
+            (result) => {
+                if (result.status === Office.AsyncResultStatus.Failed) {
+                    console.warn('ActiveViewChanged Handler fehlgeschlagen:', result.error.message);
+                }
+            }
+        );
+
+        Office.context.document.getActiveViewAsync((result) => {
+            if (result.status === Office.AsyncResultStatus.Succeeded) {
+                handleViewMode(result.value);
+            }
+        });
+    }
+
+    function onViewChanged(args) {
+        handleViewMode(args.activeView);
+    }
+
+    function handleViewMode(activeView) {
+        if (activeView === Office.ActiveView.Read) {
+            document.body.classList.add('presentation-mode');
+
+            // Im Praesentationsmodus: URL wiederherstellen falls noetig
+            if (!currentUrl) {
+                restoreSavedUrl();
+            }
+
+            if (currentUrl) {
+                showDisplayView();
+            } else {
+                // Auch ohne URL: Setup-View ausblenden (weiss statt Eingabeformular)
+                document.getElementById('setupView').style.display = 'none';
+            }
+        } else {
+            document.body.classList.remove('presentation-mode');
+        }
+    }
+
+    // ===== Favoriten =====
+
+    function addToFavorites(url) {
+        if (!url) return;
+        let favorites = getFavorites();
+        favorites = favorites.filter(fav => fav.url !== url);
+        favorites.unshift({
+            url: url,
+            name: extractFileName(url),
+            added: new Date().toISOString()
+        });
+        if (favorites.length > MAX_FAVORITES) {
+            favorites = favorites.slice(0, MAX_FAVORITES);
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(favorites));
+        loadFavorites();
+    }
+
+    function getFavorites() {
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            return stored ? JSON.parse(stored) : [];
+        } catch (e) {
+            console.error('Fehler beim Laden der Favoriten:', e);
+            return [];
+        }
+    }
+
+    function loadFavorites() {
+        const favoritesSelect = document.getElementById('favorites');
+        const favorites = getFavorites();
+        favoritesSelect.innerHTML = '<option value="">-- Auswaehlen --</option>';
+        favorites.forEach(fav => {
+            const option = document.createElement('option');
+            option.value = fav.url;
+            option.textContent = fav.name || fav.url;
+            favoritesSelect.appendChild(option);
+        });
+    }
+
+    // ===== Hilfsfunktionen =====
+
+    function isValidUrl(string) {
+        try {
+            const url = new URL(string);
+            return url.protocol === 'https:' ||
+                   (url.protocol === 'http:' && url.hostname === 'localhost');
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function extractFileName(url) {
+        try {
+            const pathname = new URL(url).pathname;
+            const filename = pathname.split('/').pop();
+            return decodeURIComponent(filename) || url;
+        } catch (e) {
+            return url;
+        }
+    }
+
+    function showError(message) {
+        const errorDiv = document.getElementById('errorMsg');
+        errorDiv.textContent = message;
+        errorDiv.style.display = 'block';
+    }
+
+    function hideError() {
+        document.getElementById('errorMsg').style.display = 'none';
+    }
+
+    // ===== postMessage-Bruecke =====
+
+    function sendMessageToVisualization(message) {
+        const vizFrame = document.getElementById('vizFrame');
+        if (vizFrame && vizFrame.contentWindow) {
+            vizFrame.contentWindow.postMessage(message, '*');
+        }
+    }
+
+    window.addEventListener('message', (event) => {
+        if (event.origin.includes('.sharepoint.com') || event.origin.includes('localhost')) {
+            console.log('Nachricht von Visualisierung:', event.data);
+        }
+    });
+    </script>
+</body>
+</html>
