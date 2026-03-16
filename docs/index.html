@@ -230,13 +230,13 @@
         <div class="setup-card">
             <h2 class="ms-font-l">Visualisierung einbetten</h2>
 
-            <label class="ms-font-m" for="vizUrl">URL zur HTML-Datei:</label>
+            <label class="ms-font-m" for="vizUrl">SharePoint-URL zur HTML-Datei:</label>
             <div class="input-group">
                 <input
                     type="url"
                     id="vizUrl"
                     class="ms-TextField-field"
-                    placeholder="https://example.com/visualisierung.html"
+                    placeholder="https://firma.sharepoint.com/.../visualisierung.html"
                 />
                 <button id="loadBtn" class="ms-Button ms-Button--primary">
                     <span class="ms-Button-label">Laden</span>
@@ -279,9 +279,9 @@
      */
 
     // Konstanten
-    const STORAGE_KEY = 'vizAddin_favorites';
-    const SETTINGS_KEY = 'vizUrl';
-    const LAST_URL_KEY = 'vizAddin_lastUrl';  // localStorage-Backup fuer Praesentationsmodus
+    const STORAGE_KEY = 'vizAddin_favorites';   // localStorage: Favoriten (geteilt)
+    const SETTINGS_KEY = 'vizUrl';              // Document Settings: URL (pro Instanz)
+    const LAST_URL_KEY = 'vizAddin_lastUrl';    // localStorage-Backup fuer Praesentationsmodus
     const MAX_FAVORITES = 10;
 
     // Zustand
@@ -300,10 +300,14 @@
             initializeApp();
         });
     } else {
+        // Browser-Fallback (kein Office.js vorhanden)
         console.log('Kein Office.js — Browser-Testmodus');
         document.addEventListener('DOMContentLoaded', initializeApp);
     }
 
+    /**
+     * App initialisieren
+     */
     function initializeApp() {
         // Event Listeners
         document.getElementById('loadBtn').addEventListener('click', () => {
@@ -343,10 +347,16 @@
         }
     }
 
+    /**
+     * URL aus verschiedenen Quellen wiederherstellen (Fallback-Kette)
+     * 1. Document Settings (in .pptx, pro Instanz)
+     * 2. localStorage-Backup (fuer Praesentationsmodus)
+     * 3. Letzter Favorit
+     */
     function restoreSavedUrl() {
         let savedUrl = null;
 
-        // 1. Versuch: Document Settings (in .pptx gespeichert, pro Instanz)
+        // 1. Versuch: Document Settings
         if (isOfficeEnvironment) {
             try {
                 savedUrl = Office.context.document.settings.get(SETTINGS_KEY);
@@ -355,7 +365,7 @@
             }
         }
 
-        // 2. Versuch: localStorage-Backup (funktioniert auch im Praesentationsmodus)
+        // 2. Versuch: localStorage-Backup
         if (!savedUrl) {
             try {
                 savedUrl = localStorage.getItem(LAST_URL_KEY);
@@ -380,6 +390,9 @@
 
     // ===== URL laden und speichern =====
 
+    /**
+     * URL validieren, speichern und Visualisierung laden
+     */
     function handleLoadClick(url) {
         if (!url) {
             showError('Bitte eine URL eingeben.');
@@ -392,6 +405,7 @@
         hideError();
         currentUrl = url;
 
+        // URL in Document Settings speichern (persistiert in der .pptx Datei)
         if (isOfficeEnvironment) {
             Office.context.document.settings.set(SETTINGS_KEY, url);
             Office.context.document.settings.saveAsync((result) => {
@@ -408,12 +422,19 @@
             console.warn('localStorage Backup fehlgeschlagen:', e);
         }
 
+        // Automatisch zu Favoriten hinzufuegen
         addToFavorites(url);
+
+        // Visualisierung laden
         loadVisualization(url);
     }
 
+    /**
+     * HTML-Visualisierung im iframe laden
+     */
     function loadVisualization(url) {
         document.getElementById('vizFrame').src = url;
+        // Ansichtswechsel passiert in onFrameLoaded
     }
 
     // ===== Ansichten umschalten =====
@@ -421,6 +442,7 @@
     function showSetupView() {
         document.getElementById('setupView').style.display = 'flex';
         document.getElementById('displayView').style.display = 'none';
+
         if (currentUrl) {
             document.getElementById('vizUrl').value = currentUrl;
         }
@@ -448,6 +470,7 @@
     function detectViewMode() {
         if (!isOfficeEnvironment) return;
 
+        // Event fuer Ansichtswechsel registrieren (funktioniert auf Desktop)
         Office.context.document.addHandlerAsync(
             Office.EventType.ActiveViewChanged,
             onViewChanged,
@@ -458,6 +481,8 @@
             }
         );
 
+        // Aktuelle Ansicht sofort pruefen (wichtig fuer PowerPoint Online,
+        // wo ActiveViewChanged beim Slideshow-Start nicht feuert)
         Office.context.document.getActiveViewAsync((result) => {
             if (result.status === Office.AsyncResultStatus.Succeeded) {
                 handleViewMode(result.value);
@@ -471,9 +496,10 @@
 
     function handleViewMode(activeView) {
         if (activeView === Office.ActiveView.Read) {
+            // Praesentationsmodus: Toolbar ausblenden, Visualisierung erzwingen
             document.body.classList.add('presentation-mode');
 
-            // Im Praesentationsmodus: URL wiederherstellen falls noetig
+            // URL wiederherstellen falls noetig
             if (!currentUrl) {
                 restoreSavedUrl();
             }
@@ -481,7 +507,7 @@
             if (currentUrl) {
                 showDisplayView();
             } else {
-                // Auch ohne URL: Setup-View ausblenden (weiss statt Eingabeformular)
+                // Ohne URL: Setup-View ausblenden (weiss statt Eingabeformular)
                 document.getElementById('setupView').style.display = 'none';
             }
         } else {
@@ -489,10 +515,11 @@
         }
     }
 
-    // ===== Favoriten =====
+    // ===== Favoriten (localStorage, geteilt) =====
 
     function addToFavorites(url) {
         if (!url) return;
+
         let favorites = getFavorites();
         favorites = favorites.filter(fav => fav.url !== url);
         favorites.unshift({
@@ -500,9 +527,11 @@
             name: extractFileName(url),
             added: new Date().toISOString()
         });
+
         if (favorites.length > MAX_FAVORITES) {
             favorites = favorites.slice(0, MAX_FAVORITES);
         }
+
         localStorage.setItem(STORAGE_KEY, JSON.stringify(favorites));
         loadFavorites();
     }
@@ -520,7 +549,9 @@
     function loadFavorites() {
         const favoritesSelect = document.getElementById('favorites');
         const favorites = getFavorites();
+
         favoritesSelect.innerHTML = '<option value="">-- Auswaehlen --</option>';
+
         favorites.forEach(fav => {
             const option = document.createElement('option');
             option.value = fav.url;
@@ -534,11 +565,16 @@
     function isValidUrl(string) {
         try {
             const url = new URL(string);
+            // HTTPS erforderlich, aber localhost fuer lokales Testen erlauben
             return url.protocol === 'https:' ||
                    (url.protocol === 'http:' && url.hostname === 'localhost');
         } catch (_) {
             return false;
         }
+    }
+
+    function isSharePointUrl(url) {
+        return url.includes('.sharepoint.com') || url.includes('.sharepoint-df.com');
     }
 
     function extractFileName(url) {
