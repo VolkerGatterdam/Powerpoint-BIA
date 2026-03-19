@@ -413,12 +413,7 @@
             msalInstance = await msal.createNestablePublicClientApplication(msalConfig);
             console.log('MSAL initialisiert (NAA-Modus)');
         } catch (naaError) {
-            try {
-                msalInstance = await msal.createPublicClientApplication(msalConfig);
-                console.log('MSAL initialisiert (Browser-Modus)');
-            } catch (fallbackError) {
-                console.error('MSAL Initialisierung fehlgeschlagen:', fallbackError);
-            }
+            console.log('NAA nicht verfuegbar — SharePoint-Features nur in PowerPoint aktiv');
         }
     }
 
