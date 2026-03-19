@@ -3,10 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Daten-Visualisierung</title>
+    <title>MACS Matchmaker Data Viewer</title>
 
     <!-- Office.js Bibliothek -->
     <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+
+    <!-- MSAL.js fuer Nested App Authentication (NAA) + Graph API -->
+    <script src="https://alcdn.msauth.net/browser/3.21.0/js/msal-browser.min.js"></script>
 
     <!-- Fluent UI fuer konsistentes Microsoft-Design -->
     <link rel="stylesheet" href="https://static2.sharepointonline.com/files/fabric/office-ui-fabric-core/11.0.0/css/fabric.min.css"/>
@@ -228,15 +231,15 @@
     <!-- Setup-Ansicht: URL-Eingabe (zentrierte Karte) -->
     <div id="setupView" class="view-setup">
         <div class="setup-card">
-            <h2 class="ms-font-l">Visualisierung einbetten</h2>
+            <h2 class="ms-font-l">MACS Matchmaker Data Viewer</h2>
 
-            <label class="ms-font-m" for="vizUrl">SharePoint-URL zur HTML-Datei:</label>
+            <label class="ms-font-m" for="vizUrl">URL to HTML visualization:</label>
             <div class="input-group">
                 <input
                     type="url"
                     id="vizUrl"
                     class="ms-TextField-field"
-                    placeholder="https://firma.sharepoint.com/.../visualisierung.html"
+                    placeholder="https://company.sharepoint.com/.../visualization.html"
                 />
                 <button id="loadBtn" class="ms-Button ms-Button--primary">
                     <span class="ms-Button-label">Laden</span>
@@ -244,9 +247,9 @@
             </div>
 
             <div class="favorites-section">
-                <label class="ms-font-s">Zuletzt verwendet:</label>
+                <label class="ms-font-s">Recent:</label>
                 <select id="favorites" class="ms-Dropdown-select">
-                    <option value="">-- Auswaehlen --</option>
+                    <option value="">-- Select --</option>
                 </select>
             </div>
 
@@ -263,10 +266,10 @@
 
         <!-- Schwebendes Toolbar-Overlay (oben rechts) -->
         <div id="toolbar" class="toolbar">
-            <button id="editBtn" class="toolbar-btn" title="URL aendern">
+            <button id="editBtn" class="toolbar-btn" title="Change URL">
                 &#9881;
             </button>
-            <button id="refreshBtn" class="toolbar-btn" title="Aktualisieren">
+            <button id="refreshBtn" class="toolbar-btn" title="Refresh">
                 &#8635;
             </button>
         </div>
@@ -274,19 +277,25 @@
 
     <script>
     /*
-     * Daten-Visualisierung PowerPoint Content Add-in
-     * Bettet interaktive HTML-Dateien direkt auf der Folie ein
+     * MACS Matchmaker Data Viewer — PowerPoint Content Add-in
+     * Bettet interaktive HTML-Visualisierungen direkt auf der Folie ein.
+     * SharePoint-Dateien werden via Graph API geladen (NAA-Authentifizierung).
      */
 
     // Konstanten
-    const STORAGE_KEY = 'vizAddin_favorites';   // localStorage: Favoriten (geteilt)
-    const SETTINGS_KEY = 'vizUrl';              // Document Settings: URL (pro Instanz)
-    const LAST_URL_KEY = 'vizAddin_lastUrl';    // localStorage-Backup fuer Praesentationsmodus
+    const STORAGE_KEY = 'vizAddin_favorites';
+    const SETTINGS_KEY = 'vizUrl';
+    const LAST_URL_KEY = 'vizAddin_lastUrl';
     const MAX_FAVORITES = 10;
+
+    // MSAL / Graph API
+    const CLIENT_ID = 'edcce314-4b24-4216-9f5b-b65f829e3aa2';
+    const GRAPH_SCOPES = ['https://graph.microsoft.com/Files.Read'];
 
     // Zustand
     let currentUrl = '';
     let isOfficeEnvironment = false;
+    let msalInstance = null;
 
     // Office.js Einstiegspunkt — oder Browser-Fallback
     if (typeof Office !== 'undefined') {
@@ -300,7 +309,6 @@
             initializeApp();
         });
     } else {
-        // Browser-Fallback (kein Office.js vorhanden)
         console.log('Kein Office.js — Browser-Testmodus');
         document.addEventListener('DOMContentLoaded', initializeApp);
     }
@@ -308,8 +316,9 @@
     /**
      * App initialisieren
      */
-    function initializeApp() {
-        // Event Listeners
+    async function initializeApp() {
+        await initializeMsal();
+
         document.getElementById('loadBtn').addEventListener('click', () => {
             handleLoadClick(document.getElementById('vizUrl').value);
         });
@@ -332,14 +341,10 @@
             if (currentUrl) loadVisualization(currentUrl);
         });
 
-        // Frame-Events
         document.getElementById('vizFrame').addEventListener('load', onFrameLoaded);
         document.getElementById('vizFrame').addEventListener('error', onFrameError);
 
-        // Favoriten aus localStorage laden
         loadFavorites();
-
-        // Gespeicherte URL wiederherstellen (Fallback-Kette)
         restoreSavedUrl();
 
         if (isOfficeEnvironment) {
@@ -347,65 +352,99 @@
         }
     }
 
-    /**
-     * URL aus verschiedenen Quellen wiederherstellen (Fallback-Kette)
-     * 1. Document Settings (in .pptx, pro Instanz)
-     * 2. localStorage-Backup (fuer Praesentationsmodus)
-     * 3. Letzter Favorit
-     */
-    function restoreSavedUrl() {
-        let savedUrl = null;
+    // ===== MSAL / Graph API =====
 
-        // 1. Versuch: Document Settings
-        if (isOfficeEnvironment) {
+    async function initializeMsal() {
+        if (typeof msal === 'undefined') {
+            console.warn('MSAL.js nicht geladen — SharePoint-Zugriff nicht verfuegbar');
+            return;
+        }
+
+        const msalConfig = {
+            auth: {
+                clientId: CLIENT_ID,
+                authority: 'https://login.microsoftonline.com/common',
+                supportsNestedAppAuth: true
+            }
+        };
+
+        try {
+            msalInstance = await msal.createNestablePublicClientApplication(msalConfig);
+            console.log('MSAL initialisiert (NAA-Modus)');
+        } catch (naaError) {
             try {
-                savedUrl = Office.context.document.settings.get(SETTINGS_KEY);
-            } catch (e) {
-                console.warn('Document Settings nicht verfuegbar:', e);
+                msalInstance = await msal.createPublicClientApplication(msalConfig);
+                console.log('MSAL initialisiert (Browser-Modus)');
+            } catch (fallbackError) {
+                console.error('MSAL Initialisierung fehlgeschlagen:', fallbackError);
             }
         }
+    }
 
-        // 2. Versuch: localStorage-Backup
-        if (!savedUrl) {
+    async function getGraphToken() {
+        if (!msalInstance) {
+            throw new Error('Authentication not available. Please reload the add-in.');
+        }
+
+        const tokenRequest = { scopes: GRAPH_SCOPES };
+
+        const accounts = msalInstance.getAllAccounts();
+        if (accounts.length > 0) {
+            tokenRequest.account = accounts[0];
+        }
+
+        try {
+            const response = await msalInstance.acquireTokenSilent(tokenRequest);
+            return response.accessToken;
+        } catch (silentError) {
+            console.log('Silent token failed, trying popup:', silentError.message);
             try {
-                savedUrl = localStorage.getItem(LAST_URL_KEY);
-            } catch (e) {
-                console.warn('localStorage nicht verfuegbar:', e);
+                const response = await msalInstance.acquireTokenPopup(tokenRequest);
+                return response.accessToken;
+            } catch (popupError) {
+                throw new Error('Sign-in failed: ' + popupError.message);
             }
         }
+    }
 
-        // 3. Versuch: Letzter Favorit
-        if (!savedUrl) {
-            const favorites = getFavorites();
-            if (favorites.length > 0) {
-                savedUrl = favorites[0].url;
+    async function fetchSharePointContent(url) {
+        const token = await getGraphToken();
+
+        const base64 = btoa(url)
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const shareId = 'u!' + base64;
+
+        const response = await fetch(
+            'https://graph.microsoft.com/v1.0/shares/' + shareId + '/driveItem/content',
+            { headers: { 'Authorization': 'Bearer ' + token } }
+        );
+
+        if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+                throw new Error('No permission for this file. Please check access rights.');
             }
+            throw new Error('Could not load file (HTTP ' + response.status + ')');
         }
 
-        if (savedUrl) {
-            currentUrl = savedUrl;
-            loadVisualization(savedUrl);
-        }
+        return await response.text();
     }
 
     // ===== URL laden und speichern =====
 
-    /**
-     * URL validieren, speichern und Visualisierung laden
-     */
     function handleLoadClick(url) {
         if (!url) {
-            showError('Bitte eine URL eingeben.');
+            showError('Please enter a URL.');
             return;
         }
         if (!isValidUrl(url)) {
-            showError('Bitte eine gueltige URL eingeben (https://...)');
+            showError('Please enter a valid URL (https://...)');
             return;
         }
         hideError();
         currentUrl = url;
 
-        // URL in Document Settings speichern (persistiert in der .pptx Datei)
         if (isOfficeEnvironment) {
             Office.context.document.settings.set(SETTINGS_KEY, url);
             Office.context.document.settings.saveAsync((result) => {
@@ -415,26 +454,43 @@
             });
         }
 
-        // URL in localStorage als Backup speichern (fuer Praesentationsmodus)
         try {
             localStorage.setItem(LAST_URL_KEY, url);
         } catch (e) {
             console.warn('localStorage Backup fehlgeschlagen:', e);
         }
 
-        // Automatisch zu Favoriten hinzufuegen
         addToFavorites(url);
-
-        // Visualisierung laden
         loadVisualization(url);
     }
 
-    /**
-     * HTML-Visualisierung im iframe laden
-     */
-    function loadVisualization(url) {
-        document.getElementById('vizFrame').src = url;
-        // Ansichtswechsel passiert in onFrameLoaded
+    async function loadVisualization(url) {
+        const vizFrame = document.getElementById('vizFrame');
+
+        if (isSharePointUrl(url)) {
+            if (!msalInstance) {
+                showError('SharePoint URLs require authentication. MSAL could not be loaded.');
+                showSetupView();
+                return;
+            }
+
+            showLoading();
+            try {
+                const htmlContent = await fetchSharePointContent(url);
+                vizFrame.removeAttribute('src');
+                vizFrame.srcdoc = htmlContent;
+                hideLoading();
+                showDisplayView();
+                console.log('SharePoint-Visualisierung geladen via Graph API:', url);
+            } catch (error) {
+                hideLoading();
+                showError(error.message);
+                showSetupView();
+            }
+        } else {
+            vizFrame.removeAttribute('srcdoc');
+            vizFrame.src = url;
+        }
     }
 
     // ===== Ansichten umschalten =====
@@ -453,16 +509,72 @@
         document.getElementById('displayView').style.display = 'block';
     }
 
+    // ===== Lade-Anzeige =====
+
+    function showLoading() {
+        let overlay = document.getElementById('loadingOverlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'loadingOverlay';
+            overlay.className = 'loading-overlay';
+            overlay.innerHTML = '<div class="spinner"></div>';
+            document.getElementById('displayView').appendChild(overlay);
+        }
+        overlay.style.display = 'flex';
+        showDisplayView();
+    }
+
+    function hideLoading() {
+        const overlay = document.getElementById('loadingOverlay');
+        if (overlay) overlay.style.display = 'none';
+    }
+
     // ===== Frame-Events =====
 
     function onFrameLoaded() {
+        hideLoading();
         showDisplayView();
         console.log('Visualisierung geladen:', currentUrl);
     }
 
     function onFrameError() {
-        showError('Die Visualisierung konnte nicht geladen werden. URL und Zugriffsrechte pruefen.');
+        hideLoading();
+        showError('Could not load visualization. Please check the URL and access permissions.');
         showSetupView();
+    }
+
+    // ===== URL wiederherstellen =====
+
+    function restoreSavedUrl() {
+        let savedUrl = null;
+
+        if (isOfficeEnvironment) {
+            try {
+                savedUrl = Office.context.document.settings.get(SETTINGS_KEY);
+            } catch (e) {
+                console.warn('Document Settings nicht verfuegbar:', e);
+            }
+        }
+
+        if (!savedUrl) {
+            try {
+                savedUrl = localStorage.getItem(LAST_URL_KEY);
+            } catch (e) {
+                console.warn('localStorage nicht verfuegbar:', e);
+            }
+        }
+
+        if (!savedUrl) {
+            const favorites = getFavorites();
+            if (favorites.length > 0) {
+                savedUrl = favorites[0].url;
+            }
+        }
+
+        if (savedUrl) {
+            currentUrl = savedUrl;
+            loadVisualization(savedUrl);
+        }
     }
 
     // ===== Praesentationsmodus =====
@@ -470,7 +582,6 @@
     function detectViewMode() {
         if (!isOfficeEnvironment) return;
 
-        // Event fuer Ansichtswechsel registrieren (funktioniert auf Desktop)
         Office.context.document.addHandlerAsync(
             Office.EventType.ActiveViewChanged,
             onViewChanged,
@@ -481,8 +592,6 @@
             }
         );
 
-        // Aktuelle Ansicht sofort pruefen (wichtig fuer PowerPoint Online,
-        // wo ActiveViewChanged beim Slideshow-Start nicht feuert)
         Office.context.document.getActiveViewAsync((result) => {
             if (result.status === Office.AsyncResultStatus.Succeeded) {
                 handleViewMode(result.value);
@@ -496,10 +605,8 @@
 
     function handleViewMode(activeView) {
         if (activeView === Office.ActiveView.Read) {
-            // Praesentationsmodus: Toolbar ausblenden, Visualisierung erzwingen
             document.body.classList.add('presentation-mode');
 
-            // URL wiederherstellen falls noetig
             if (!currentUrl) {
                 restoreSavedUrl();
             }
@@ -507,7 +614,6 @@
             if (currentUrl) {
                 showDisplayView();
             } else {
-                // Ohne URL: Setup-View ausblenden (weiss statt Eingabeformular)
                 document.getElementById('setupView').style.display = 'none';
             }
         } else {
@@ -550,7 +656,7 @@
         const favoritesSelect = document.getElementById('favorites');
         const favorites = getFavorites();
 
-        favoritesSelect.innerHTML = '<option value="">-- Auswaehlen --</option>';
+        favoritesSelect.innerHTML = '<option value="">-- Select --</option>';
 
         favorites.forEach(fav => {
             const option = document.createElement('option');
@@ -565,7 +671,6 @@
     function isValidUrl(string) {
         try {
             const url = new URL(string);
-            // HTTPS erforderlich, aber localhost fuer lokales Testen erlauben
             return url.protocol === 'https:' ||
                    (url.protocol === 'http:' && url.hostname === 'localhost');
         } catch (_) {
@@ -607,7 +712,10 @@
     }
 
     window.addEventListener('message', (event) => {
-        if (event.origin.includes('.sharepoint.com') || event.origin.includes('localhost')) {
+        if (event.origin === window.location.origin ||
+            event.origin.includes('.sharepoint.com') ||
+            event.origin.includes('localhost') ||
+            event.origin.includes('github.io')) {
             console.log('Nachricht von Visualisierung:', event.data);
         }
     });
